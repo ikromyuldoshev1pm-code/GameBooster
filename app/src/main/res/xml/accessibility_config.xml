@@ -3,5 +3,4 @@
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canRetrieveWindowContent="true"
-    android:notificationTimeout="200"
-    android:description="Faqat keshni tozalash uchun Sozlamalardagi tugmani bosadi. Ekran maʼlumoti oʻqilmaydi." />
+    android:notificationTimeout="200" />
