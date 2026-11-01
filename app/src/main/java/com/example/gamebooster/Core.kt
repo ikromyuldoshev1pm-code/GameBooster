@@ -1,6 +1,5 @@
 package com.example.gamebooster
 
-import android.accessibilityservice.AccessibilityService
 import android.app.AppOpsManager
 import android.app.usage.StorageStatsManager
 import android.app.usage.UsageEvents
@@ -9,15 +8,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.os.Process
 import android.os.storage.StorageManager
-import android.provider.Settings
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("gb", Context.MODE_PRIVATE)
@@ -81,94 +74,5 @@ class BootReceiver : BroadcastReceiver() {
         if (i.action == Intent.ACTION_BOOT_COMPLETED && Prefs.anyActive(c)) {
             c.startForegroundService(Intent(c, MonitorService::class.java))
         }
-    }
-}
-
-class CacheAccessibilityService : AccessibilityService() {
-
-    companion object {
-        var instance: CacheAccessibilityService? = null
-        fun running(): Boolean = instance != null
-
-        private val STORAGE = setOf(
-            "storage", "storage & cache", "storage and cache",
-            "хранилище", "память", "xotira"
-        )
-        private val CLEAR_CACHE = setOf(
-            "clear cache", "очистить кеш", "очистить кэш",
-            "keshni tozalash", "keshni o'chirish"
-        )
-    }
-
-    private val queue = ArrayDeque<String>()
-    private var busy = false
-    private val h = Handler(Looper.getMainLooper())
-
-    override fun onServiceConnected() { instance = this }
-
-    override fun onUnbind(intent: Intent?): Boolean {
-        instance = null
-        return super.onUnbind(intent)
-    }
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
-    override fun onInterrupt() {}
-
-    fun enqueue(packages: List<String>) {
-        queue.clear()
-        queue.addAll(packages)
-        if (!busy) next()
-    }
-
-    private fun next() {
-        val p = queue.removeFirstOrNull()
-        if (p == null) {
-            busy = false
-            performGlobalAction(GLOBAL_ACTION_HOME)
-            return
-        }
-        busy = true
-        val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + p))
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(i)
-        h.postDelayed({ tick(0) }, 1200L)
-    }
-
-    private fun tick(attempt: Int) {
-        if (attempt > 12) {
-            next()
-            return
-        }
-        val root = rootInActiveWindow
-        if (root != null) {
-            if (clickLabel(root, CLEAR_CACHE)) {
-                h.postDelayed({ next() }, 900L)
-                return
-            }
-            clickLabel(root, STORAGE)
-        }
-        h.postDelayed({ tick(attempt + 1) }, 700L)
-    }
-
-    private fun clickLabel(root: AccessibilityNodeInfo, labels: Set<String>): Boolean {
-        val stack = ArrayDeque<AccessibilityNodeInfo>()
-        stack.add(root)
-        while (stack.isNotEmpty()) {
-            val n = stack.removeLast()
-            val t = n.text?.toString()?.trim()?.lowercase()
-            if (t != null && t in labels) {
-                var c: AccessibilityNodeInfo? = n
-                while (c != null && !c.isClickable) c = c.parent
-                if (c != null && c.isEnabled) {
-                    c.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    return true
-                }
-            }
-            for (k in 0 until n.childCount) {
-                val child = n.getChild(k)
-                if (child != null) stack.add(child)
-            }
-        }
-        return false
     }
 }
