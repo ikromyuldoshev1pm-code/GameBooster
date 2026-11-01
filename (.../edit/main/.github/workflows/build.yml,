@@ -19,6 +19,8 @@ jobs:
                   d = fh.read(24)
               w, h = struct.unpack(">II", d[16:24])
               shutil.copy(f, R + ("game_logo.png" if w == h else "game_bg.png"))
+          for f in glob.glob("*.jpg") + glob.glob("*.jpeg"):
+              shutil.copy(f, R + "game_home.jpg")
           PY
           cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
