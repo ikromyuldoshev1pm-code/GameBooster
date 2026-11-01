@@ -7,11 +7,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Add icon
+      - name: Add images
         run: |
           R=app/src/main/res
           mkdir -p $R/drawable-nodpi $R/mipmap-anydpi-v26
-          cp ./*.png $R/drawable-nodpi/game_logo.png
+          python3 - <<'PY'
+          import glob, struct, shutil
+          R = "app/src/main/res/drawable-nodpi/"
+          for f in glob.glob("*.png"):
+              with open(f, "rb") as fh:
+                  d = fh.read(24)
+              w, h = struct.unpack(">II", d[16:24])
+              shutil.copy(f, R + ("game_logo.png" if w == h else "game_bg.png"))
+          PY
           cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
               <background android:drawable="@android:color/black"/>
