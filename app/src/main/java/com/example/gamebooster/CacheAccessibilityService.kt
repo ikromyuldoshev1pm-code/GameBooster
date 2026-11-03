@@ -8,12 +8,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.PathMeasure
 import android.graphics.PixelFormat
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -29,135 +29,113 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.PI
+import kotlin.math.sin
 
 class NeonView(ctx: Context) : View(ctx) {
 
-    private val bg: Bitmap? = try {
-        val id = ctx.resources.getIdentifier("game_bg", "drawable", ctx.packageName)
-        if (id != 0) BitmapFactory.decodeResource(ctx.resources, id) else null
-    } catch (_: Throwable) {
-        null
+    private val bg: Bitmap? = load("game_bg", 1)
+    private val broom: Bitmap? = load("game_logo", 2)
+
+    private fun load(name: String, sample: Int): Bitmap? {
+        return try {
+            val id = context.resources.getIdentifier(name, "drawable", context.packageName)
+            if (id == 0) {
+                null
+            } else {
+                val o = BitmapFactory.Options()
+                o.inSampleSize = sample
+                BitmapFactory.decodeResource(context.resources, id, o)
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
-    private fun neon(color: Int): Paint {
+    private fun ring(color: Int): Paint {
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
         p.style = Paint.Style.STROKE
         p.strokeCap = Paint.Cap.ROUND
-        p.strokeJoin = Paint.Join.ROUND
         p.color = color
         return p
     }
 
-    private val glow = neon(Color.argb(70, 0, 160, 255))
-    private val mid = neon(Color.argb(170, 0, 200, 255))
-    private val core = neon(Color.rgb(200, 245, 255))
-
-    private val paths = ArrayList<Path>()
-    private val measures = ArrayList<PathMeasure>()
-    private val seg = Path()
-    private var progress = 0f
+    private val glow = ring(Color.argb(60, 0, 255, 70))
+    private val mid = ring(Color.argb(150, 40, 255, 100))
+    private val core = ring(Color.rgb(190, 255, 205))
+    private val arc = ring(Color.rgb(220, 255, 230))
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bgPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val broomPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val oval = RectF()
+    private val dst = RectF()
+    private var t = 0f
 
     private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 3200L
+        duration = 2400L
         repeatCount = ValueAnimator.INFINITE
         interpolator = LinearInterpolator()
         addUpdateListener {
-            progress = it.animatedValue as Float
+            t = it.animatedValue as Float
             invalidate()
         }
     }
 
-    private fun base(): List<Path> {
-        val list = ArrayList<Path>()
-
-        val body = Path()
-        body.moveTo(45f, 25f)
-        body.cubicTo(20f, 25f, 8f, 60f, 4f, 95f)
-        body.cubicTo(1f, 118f, 14f, 130f, 30f, 128f)
-        body.cubicTo(48f, 126f, 62f, 100f, 78f, 90f)
-        body.lineTo(122f, 90f)
-        body.cubicTo(138f, 100f, 152f, 126f, 170f, 128f)
-        body.cubicTo(186f, 130f, 199f, 118f, 196f, 95f)
-        body.cubicTo(192f, 60f, 180f, 25f, 155f, 25f)
-        body.cubicTo(140f, 25f, 135f, 32f, 125f, 32f)
-        body.lineTo(75f, 32f)
-        body.cubicTo(65f, 32f, 60f, 25f, 45f, 25f)
-        body.close()
-        list.add(body)
-
-        val dpad = Path()
-        dpad.moveTo(44f, 43f)
-        dpad.lineTo(56f, 43f)
-        dpad.lineTo(56f, 49f)
-        dpad.lineTo(62f, 49f)
-        dpad.lineTo(62f, 61f)
-        dpad.lineTo(56f, 61f)
-        dpad.lineTo(56f, 67f)
-        dpad.lineTo(44f, 67f)
-        dpad.lineTo(44f, 61f)
-        dpad.lineTo(38f, 61f)
-        dpad.lineTo(38f, 49f)
-        dpad.lineTo(44f, 49f)
-        dpad.close()
-        list.add(dpad)
-
-        val bx = floatArrayOf(150f, 150f, 139f, 161f)
-        val by = floatArrayOf(44f, 66f, 55f, 55f)
-        for (i in bx.indices) {
-            val c = Path()
-            c.addCircle(bx[i], by[i], 5f, Path.Direction.CW)
-            list.add(c)
-        }
-
-        val sx = floatArrayOf(75f, 125f)
-        for (x in sx) {
-            val c = Path()
-            c.addCircle(x, 70f, 11f, Path.Direction.CW)
-            list.add(c)
-        }
-        return list
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        super.onSizeChanged(w, h, ow, oh)
-        paths.clear()
-        measures.clear()
-        val s = w * 0.75f / 200f
-        val m = Matrix()
-        m.setScale(s, s)
-        m.postTranslate(w / 2f - 100f * s, h * 0.38f - 65f * s)
-        for (b in base()) {
-            val p = Path()
-            b.transform(m, p)
-            paths.add(p)
-            measures.add(PathMeasure(p, false))
-        }
-        glow.strokeWidth = 5f * s
-        mid.strokeWidth = 2.2f * s
-        core.strokeWidth = 0.9f * s
+    init {
+        broomPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
     }
 
     override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val two = (2.0 * PI).toFloat()
+
+        c.drawColor(Color.BLACK)
         val b = bg
         if (b != null) {
-            val sc = maxOf(width.toFloat() / b.width, height.toFloat() / b.height)
+            val sc = maxOf(w / b.width, h / b.height)
             val dw = b.width * sc
             val dh = b.height * sc
-            val dst = RectF((width - dw) / 2f, (height - dh) / 2f, (width + dw) / 2f, (height + dh) / 2f)
-            c.drawBitmap(b, null, dst, null)
-        } else {
-            c.drawColor(Color.BLACK)
+            dst.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
+            c.drawBitmap(b, null, dst, bgPaint)
         }
-        c.drawColor(Color.argb(90, 0, 0, 20))
 
-        val p = minOf(1f, progress / 0.8f)
-        for (i in paths.indices) {
-            seg.reset()
-            val pm = measures[i]
-            pm.getSegment(0f, pm.length * p, seg, true)
-            c.drawPath(seg, glow)
-            c.drawPath(seg, mid)
-            c.drawPath(seg, core)
+        val cx = w / 2f
+        val cy = h * 0.40f
+        val r = w * 0.36f * (1f + 0.018f * sin(two * t * 2f))
+
+        glow.strokeWidth = w * 0.05f
+        mid.strokeWidth = w * 0.02f
+        core.strokeWidth = w * 0.006f
+        c.drawCircle(cx, cy, r, glow)
+        c.drawCircle(cx, cy, r, mid)
+        c.drawCircle(cx, cy, r, core)
+
+        oval.set(cx - r, cy - r, cx + r, cy + r)
+        arc.strokeWidth = w * 0.014f
+        c.drawArc(oval, t * 360f, 70f, false, arc)
+        c.drawArc(oval, t * 360f + 180f, 70f, false, arc)
+
+        val br = broom
+        if (br != null) {
+            val s = r * 1.6f
+            val left = cx - s / 2f
+            val top = cy - s / 2f
+            dst.set(left, top, left + s, top + s)
+            val angle = 22f * sin(two * t)
+            c.save()
+            c.rotate(angle, left + s * 0.78f, top + s * 0.16f)
+            c.drawBitmap(br, null, dst, broomPaint)
+            c.restore()
+        }
+
+        for (i in 0 until 14) {
+            val ph = (t * 2f + i / 14f) % 1f
+            val side = if (i % 2 == 0) -1f else 1f
+            val x = cx + side * (r * 0.15f + ph * r * 0.75f)
+            val y = cy + r * 0.50f - ph * r * 0.12f + sin(i * 1.7f) * r * 0.05f
+            fill.color = Color.argb(((1f - ph) * 220f).toInt(), 120, 255, 150)
+            c.drawCircle(x, y, (1f - ph) * w * 0.012f + 2f, fill)
         }
     }
 
@@ -226,12 +204,19 @@ class CacheAccessibilityService : AccessibilityService() {
         val tv = TextView(this)
         tv.text = "Tozalanmoqda..."
         tv.textSize = 20f
-        tv.setTextColor(Color.rgb(160, 235, 255))
+        tv.setTextColor(Color.rgb(140, 255, 160))
         tv.gravity = Gravity.CENTER
         tv.setPadding(0, 0, 0, 32)
 
         val btn = Button(this)
         btn.text = "Bekor qilish"
+        btn.isAllCaps = false
+        btn.setTextColor(Color.rgb(160, 255, 180))
+        val g = GradientDrawable()
+        g.setColor(Color.argb(120, 0, 30, 10))
+        g.setStroke(3, Color.rgb(40, 255, 100))
+        g.cornerRadius = 40f
+        btn.background = g
         btn.setOnClickListener { cancelCleaning() }
 
         col.addView(tv)
@@ -251,7 +236,8 @@ class CacheAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.OPAQUE
         )
         wm.addView(root, params)
