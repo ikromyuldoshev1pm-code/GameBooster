@@ -7,20 +7,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Add images and name
         run: |
           R=app/src/main/res
           mkdir -p $R/drawable-nodpi $R/mipmap-anydpi-v26
           python3 - <<'PY'
-          import glob, struct, shutil
+          import glob, struct, shutil, subprocess
           R = "app/src/main/res/drawable-nodpi/"
+          def stamp(f):
+              out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", f], capture_output=True, text=True).stdout.strip()
+              return int(out or 0)
+          squares = []
+          wides = []
           for f in glob.glob("*.png"):
               with open(f, "rb") as fh:
                   d = fh.read(24)
               w, h = struct.unpack(">II", d[16:24])
-              shutil.copy(f, R + ("game_logo.png" if w == h else "game_bg.png"))
-          for f in glob.glob("*.jpg") + glob.glob("*.jpeg"):
-              shutil.copy(f, R + "game_home.jpg")
+              if w == h:
+                  squares.append((stamp(f), f))
+              else:
+                  wides.append((stamp(f), f))
+          if squares:
+              squares.sort()
+              shutil.copy(squares[-1][1], R + "game_logo.png")
+          if wides:
+              wides.sort()
+              shutil.copy(wides[-1][1], R + "game_bg.png")
+          jpgs = [(stamp(f), f) for f in glob.glob("*.jpg") + glob.glob("*.jpeg")]
+          if jpgs:
+              jpgs.sort()
+              shutil.copy(jpgs[-1][1], R + "game_home.jpg")
           PY
           cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
