@@ -8,11 +8,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -31,12 +32,14 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.sin
 
 class NeonView(ctx: Context) : View(ctx) {
 
     private val bg: Bitmap? = load("game_bg", 1)
-    private val broom: Bitmap? = load("game_logo", 2)
 
     private fun load(name: String, sample: Int): Bitmap? {
         return try {
@@ -53,24 +56,45 @@ class NeonView(ctx: Context) : View(ctx) {
         }
     }
 
-    private fun ring(color: Int): Paint {
+    private fun line(color: Int): Paint {
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
         p.style = Paint.Style.STROKE
         p.strokeCap = Paint.Cap.ROUND
+        p.strokeJoin = Paint.Join.ROUND
         p.color = color
         return p
     }
 
-    private val glow = ring(Color.argb(60, 0, 255, 70))
-    private val mid = ring(Color.argb(150, 40, 255, 100))
-    private val core = ring(Color.rgb(190, 255, 205))
-    private val arc = ring(Color.rgb(220, 255, 230))
+    // Halqa
+    private val glow = line(Color.argb(60, 0, 255, 70))
+    private val mid = line(Color.argb(150, 40, 255, 100))
+    private val core = line(Color.rgb(190, 255, 205))
+    private val arc = line(Color.rgb(220, 255, 230))
+
+    // Supurgi
+    private val bGlow = line(Color.argb(60, 0, 255, 70))
+    private val bMid = line(Color.argb(150, 40, 255, 100))
+    private val bCore = line(Color.rgb(190, 255, 205))
+    private val bFill = Paint(Paint.ANTI_ALIAS_FLAG)
+
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bgPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val broomPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val oval = RectF()
     private val dst = RectF()
+
+    private val handle = Path()
+    private val hole = Path()
+    private val ferrule = Path()
+    private val bristles = ArrayList<Path>()
+    private var bristleShader: Shader? = null
+    private var handleShader: Shader? = null
+    private var unit = 1f
+
     private var t = 0f
+    private var startNs = 0L
+    private var lastNs = 0L
+    private var phi = 0f
+    private var phiVel = 0f
 
     private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 2400L
@@ -82,15 +106,77 @@ class NeonView(ctx: Context) : View(ctx) {
         }
     }
 
-    init {
-        broomPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        super.onSizeChanged(w, h, ow, oh)
+        val u = w * 0.36f * 1.15f
+        unit = u
+
+        handle.reset()
+        handle.addRoundRect(
+            RectF(-0.035f * u, -0.70f * u, 0.035f * u, -0.14f * u),
+            0.035f * u, 0.035f * u, Path.Direction.CW
+        )
+        hole.reset()
+        hole.addCircle(0f, -0.62f * u, 0.012f * u, Path.Direction.CW)
+
+        ferrule.reset()
+        ferrule.moveTo(-0.085f * u, 0f)
+        ferrule.lineTo(0.085f * u, 0f)
+        ferrule.lineTo(0.07f * u, -0.15f * u)
+        ferrule.lineTo(-0.07f * u, -0.15f * u)
+        ferrule.close()
+
+        bristles.clear()
+        for (i in 0 until 5) {
+            val tl = -0.085f * u + i * 0.034f * u + 0.003f * u
+            val tr = tl + 0.028f * u
+            val bl = -0.20f * u + i * 0.08f * u + 0.006f * u
+            val br = bl + 0.068f * u
+            val by = (0.42f - abs(i - 2) * 0.035f) * u
+            val p = Path()
+            p.moveTo(tl, 0f)
+            p.lineTo(tr, 0f)
+            p.lineTo(br, by)
+            p.lineTo(bl, by)
+            p.close()
+            bristles.add(p)
+        }
+
+        bristleShader = LinearGradient(
+            0f, 0f, 0f, 0.42f * u,
+            Color.rgb(15, 150, 35), Color.rgb(110, 255, 130), Shader.TileMode.CLAMP
+        )
+        handleShader = LinearGradient(
+            -0.035f * u, 0f, 0.035f * u, 0f,
+            Color.rgb(20, 160, 40), Color.rgb(120, 255, 140), Shader.TileMode.CLAMP
+        )
+        bGlow.strokeWidth = u * 0.05f
+        bMid.strokeWidth = u * 0.02f
+        bCore.strokeWidth = u * 0.008f
+    }
+
+    private fun drawShape(c: Canvas, p: Path, sh: Shader?) {
+        c.drawPath(p, bGlow)
+        c.drawPath(p, bMid)
+        bFill.shader = sh
+        c.drawPath(p, bFill)
+        c.drawPath(p, bCore)
     }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
         val two = (2.0 * PI).toFloat()
+        val deg = (PI / 180.0).toFloat()
 
+        val now = System.nanoTime()
+        if (startNs == 0L) startNs = now
+        var dt = if (lastNs == 0L) 0.016f else (now - lastNs) / 1000000000f
+        lastNs = now
+        if (dt > 0.05f) dt = 0.05f
+        val sec = (now - startNs) / 1000000000f
+
+        // ---------- Fon ----------
         c.drawColor(Color.BLACK)
         val b = bg
         if (b != null) {
@@ -101,6 +187,7 @@ class NeonView(ctx: Context) : View(ctx) {
             c.drawBitmap(b, null, dst, bgPaint)
         }
 
+        // ---------- Halqa ----------
         val cx = w / 2f
         val cy = h * 0.40f
         val r = w * 0.36f * (1f + 0.018f * sin(two * t * 2f))
@@ -117,31 +204,66 @@ class NeonView(ctx: Context) : View(ctx) {
         c.drawArc(oval, t * 360f, 70f, false, arc)
         c.drawArc(oval, t * 360f + 180f, 70f, false, arc)
 
-        val br = broom
-        if (br != null) {
-            val s = r * 1.6f
-            val left = cx - s / 2f
-            val top = cy - s / 2f
-            dst.set(left, top, left + s, top + s)
-            val angle = 22f * sin(two * t)
-            c.save()
-            c.rotate(angle, left + s * 0.78f, top + s * 0.16f)
-            c.drawBitmap(br, null, dst, broomPaint)
-            c.restore()
+        // ---------- Supurgi fizikasi ----------
+        val u = unit
+        val omega = two / 1.8f
+        val bp = omega * sec
+        val thetaMax = 24f
+        val theta = thetaMax * sin(bp)
+        val vn = -cos(theta * deg) * cos(bp)
+        val target = 32f * vn
+        val wn = 12f
+        val zeta = 0.5f
+        val hh = dt / 4f
+        for (k in 0 until 4) {
+            val acc = wn * wn * (target - phi) - 2f * zeta * wn * phiVel
+            phiVel += acc * hh
+            phi += phiVel * hh
         }
 
-        for (i in 0 until 14) {
-            val ph = (t * 2f + i / 14f) % 1f
-            val side = if (i % 2 == 0) -1f else 1f
-            val x = cx + side * (r * 0.15f + ph * r * 0.75f)
-            val y = cy + r * 0.50f - ph * r * 0.12f + sin(i * 1.7f) * r * 0.05f
-            fill.color = Color.argb(((1f - ph) * 220f).toInt(), 120, 255, 150)
-            c.drawCircle(x, y, (1f - ph) * w * 0.012f + 2f, fill)
+        val px = cx
+        val py = cy - 0.16f * u
+
+        c.save()
+        c.translate(px, py)
+        c.rotate(theta)
+        c.translate(0f, 0.30f * u)
+
+        c.save()
+        c.rotate(phi)
+        for (p in bristles) drawShape(c, p, bristleShader)
+        c.restore()
+
+        drawShape(c, handle, handleShader)
+        c.drawPath(hole, bCore)
+        drawShape(c, ferrule, handleShader)
+        c.restore()
+
+        // ---------- Chang zarrachalari ----------
+        val life = 0.7f
+        val n = 16
+        for (i in 0 until n) {
+            val u2 = sec / life + i / n.toFloat()
+            val age = u2 - floor(u2)
+            val sp = sec - age * life
+            val a = omega * sp
+            val th = thetaMax * deg * sin(a)
+            val tipX = px - 0.72f * u * sin(th)
+            val tipY = py + 0.72f * u * cos(th)
+            val dir = if (-cos(a) >= 0f) 1f else -1f
+            val x = tipX + dir * age * u * 0.55f + sin(i * 12.9898f) * u * 0.05f
+            val y = tipY - age * u * 0.18f + sin(i * 78.233f) * u * 0.04f
+            fill.color = Color.argb(((1f - age) * 210f).toInt(), 120, 255, 150)
+            c.drawCircle(x, y, (1f - age) * w * 0.011f + 2f, fill)
         }
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        startNs = 0L
+        lastNs = 0L
+        phi = 0f
+        phiVel = 0f
         anim.start()
     }
 
