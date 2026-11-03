@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Add images
+      - name: Add images and name
         run: |
           R=app/src/main/res
           mkdir -p $R/drawable-nodpi $R/mipmap-anydpi-v26
@@ -30,7 +30,8 @@ jobs:
               </foreground>
           </adaptive-icon>
           EOF
-          sed -i 's|android:label="GameBooster"|android:label="GameBooster" android:icon="@mipmap/ic_launcher"|' app/src/main/AndroidManifest.xml
+          sed -i 's/GameBooster/CLENOX/g' app/src/main/AndroidManifest.xml app/src/main/java/com/example/gamebooster/MonitorService.kt app/src/main/java/com/example/gamebooster/MainActivity.kt
+          sed -i 's|<application|<application android:icon="@mipmap/ic_launcher"|' app/src/main/AndroidManifest.xml
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -41,5 +42,5 @@ jobs:
       - run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: GameBooster-apk
+          name: CLENOX-apk
           path: app/build/outputs/apk/debug/app-debug.apk
