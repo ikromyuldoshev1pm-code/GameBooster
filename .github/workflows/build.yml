@@ -13,8 +13,10 @@ jobs:
         run: |
           R=app/src/main/res
           mkdir -p $R/drawable-nodpi $R/mipmap-anydpi-v26
+          pip install --quiet pillow
           python3 - <<'PY'
-          import glob, struct, shutil, subprocess, os
+          import glob, shutil, subprocess, os
+          from PIL import Image
           R = "app/src/main/res/drawable-nodpi/"
           def stamp(f):
               out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", f], capture_output=True, text=True).stdout.strip()
@@ -24,34 +26,34 @@ jobs:
               if lst:
                   return lst[-1][1]
               return None
-          squares = []
-          wides = []
-          homes = []
-          for f in glob.glob("*.png"):
-              with open(f, "rb") as fh:
-                  d = fh.read(24)
-              w, h = struct.unpack(">II", d[16:24])
-              if w == h:
-                  squares.append((stamp(f), f))
-              elif w / h < 0.75:
-                  homes.append((stamp(f), f))
-              else:
-                  wides.append((stamp(f), f))
-          for f in glob.glob("*.jpg") + glob.glob("*.jpeg"):
-              homes.append((stamp(f), f))
-          a = newest(squares)
-          if a:
-              shutil.copy(a, R + "game_logo.png")
-          b = newest(wides)
-          if b:
-              shutil.copy(b, R + "game_bg.png")
-          c = newest(homes)
-          if c:
-              ext = os.path.splitext(c)[1].lower()
+          def put(src, name):
+              if src is None:
+                  return
+              ext = os.path.splitext(src)[1].lower()
               if ext in (".jpg", ".jpeg"):
-                  shutil.copy(c, R + "game_home.jpg")
+                  shutil.copy(src, R + name + ".jpg")
               else:
-                  shutil.copy(c, R + "game_home.png")
+                  shutil.copy(src, R + name + ".png")
+          squares = []
+          homes = []
+          bgs = []
+          files = glob.glob("*.png") + glob.glob("*.jpg") + glob.glob("*.jpeg")
+          for f in files:
+              im = Image.open(f).convert("RGB")
+              w, h = im.size
+              ts = stamp(f)
+              if w == h:
+                  squares.append((ts, f))
+              elif w / h < 0.75:
+                  if im.getextrema()[0][1] > 80:
+                      homes.append((ts, f))
+                  else:
+                      bgs.append((ts, f))
+              else:
+                  bgs.append((ts, f))
+          put(newest(squares), "game_logo")
+          put(newest(homes), "game_home")
+          put(newest(bgs), "game_bg")
           PY
           cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
