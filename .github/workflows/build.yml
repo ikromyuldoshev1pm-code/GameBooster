@@ -1,0 +1,45 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add images
+        run: |
+          R=app/src/main/res
+          mkdir -p $R/drawable-nodpi $R/mipmap-anydpi-v26
+          python3 - <<'PY'
+          import glob, struct, shutil
+          R = "app/src/main/res/drawable-nodpi/"
+          for f in glob.glob("*.png"):
+              with open(f, "rb") as fh:
+                  d = fh.read(24)
+              w, h = struct.unpack(">II", d[16:24])
+              shutil.copy(f, R + ("game_logo.png" if w == h else "game_bg.png"))
+          for f in glob.glob("*.jpg") + glob.glob("*.jpeg"):
+              shutil.copy(f, R + "game_home.jpg")
+          PY
+          cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@android:color/black"/>
+              <foreground>
+                  <inset android:drawable="@drawable/game_logo" android:inset="20%"/>
+              </foreground>
+          </adaptive-icon>
+          EOF
+          sed -i 's|android:label="GameBooster"|android:label="GameBooster" android:icon="@mipmap/ic_launcher"|' app/src/main/AndroidManifest.xml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameBooster-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
