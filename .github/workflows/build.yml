@@ -14,31 +14,44 @@ jobs:
           R=app/src/main/res
           mkdir -p $R/drawable-nodpi $R/mipmap-anydpi-v26
           python3 - <<'PY'
-          import glob, struct, shutil, subprocess
+          import glob, struct, shutil, subprocess, os
           R = "app/src/main/res/drawable-nodpi/"
           def stamp(f):
               out = subprocess.run(["git", "log", "-1", "--format=%ct", "--", f], capture_output=True, text=True).stdout.strip()
               return int(out or 0)
+          def newest(lst):
+              lst.sort()
+              if lst:
+                  return lst[-1][1]
+              return None
           squares = []
           wides = []
+          homes = []
           for f in glob.glob("*.png"):
               with open(f, "rb") as fh:
                   d = fh.read(24)
               w, h = struct.unpack(">II", d[16:24])
               if w == h:
                   squares.append((stamp(f), f))
+              elif w / h < 0.75:
+                  homes.append((stamp(f), f))
               else:
                   wides.append((stamp(f), f))
-          if squares:
-              squares.sort()
-              shutil.copy(squares[-1][1], R + "game_logo.png")
-          if wides:
-              wides.sort()
-              shutil.copy(wides[-1][1], R + "game_bg.png")
-          jpgs = [(stamp(f), f) for f in glob.glob("*.jpg") + glob.glob("*.jpeg")]
-          if jpgs:
-              jpgs.sort()
-              shutil.copy(jpgs[-1][1], R + "game_home.jpg")
+          for f in glob.glob("*.jpg") + glob.glob("*.jpeg"):
+              homes.append((stamp(f), f))
+          a = newest(squares)
+          if a:
+              shutil.copy(a, R + "game_logo.png")
+          b = newest(wides)
+          if b:
+              shutil.copy(b, R + "game_bg.png")
+          c = newest(homes)
+          if c:
+              ext = os.path.splitext(c)[1].lower()
+              if ext in (".jpg", ".jpeg"):
+                  shutil.copy(c, R + "game_home.jpg")
+              else:
+                  shutil.copy(c, R + "game_home.png")
           PY
           cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
