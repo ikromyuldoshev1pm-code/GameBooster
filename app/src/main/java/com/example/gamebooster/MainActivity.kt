@@ -35,11 +35,11 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
         null
     }
 
-    private val bw = bmp?.width?.toFloat() ?: 768f
-    private val bh = bmp?.height?.toFloat() ?: 1365f
+    private val bw = bmp?.width?.toFloat() ?: 941f
+    private val bh = bmp?.height?.toFloat() ?: 1672f
     private val m = Matrix()
     private val inv = Matrix()
-    private val btn = RectF(bw * 0.117f, bh * 0.571f, bw * 0.885f, bh * 0.766f)
+    private val btn = RectF(bw * 0.117f, bh * 0.718f, bw * 0.882f, bh * 0.822f)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     private var pressed = false
@@ -75,12 +75,12 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
             c.drawColor(Color.BLACK)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 4f
-            paint.color = Color.rgb(0, 170, 255)
-            c.drawRoundRect(btn, 30f, 30f, paint)
+            paint.color = Color.rgb(0, 255, 80)
+            c.drawRoundRect(btn, 60f, 60f, paint)
             paint.style = Paint.Style.FILL
-            paint.textSize = 90f
+            paint.textSize = 80f
             paint.textAlign = Paint.Align.CENTER
-            c.drawText("START", btn.centerX(), btn.centerY() + 30f, paint)
+            c.drawText("Tozalash", btn.centerX(), btn.centerY() + 28f, paint)
         }
     }
 
@@ -93,7 +93,7 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
         c.restore()
 
         if (btnScale < 0.999f) {
-            val mg = bw * 0.04f
+            val mg = bw * 0.06f
             val area = RectF(btn.left - mg, btn.top - mg, btn.right + mg, btn.bottom + mg)
             c.save()
             c.concat(m)
@@ -187,7 +187,7 @@ class MainActivity : AppCompatActivity() {
         if (waiting) {
             waiting = false
             if (CacheAccessibilityService.running()) {
-                Toast.makeText(this, "Ruxsat berildi. START ni bosing", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Ruxsat berildi. Tozalash ni bosing", Toast.LENGTH_LONG).show()
             }
         }
     }
