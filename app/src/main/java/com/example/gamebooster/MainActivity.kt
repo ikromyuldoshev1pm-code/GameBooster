@@ -22,11 +22,16 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 
-class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
+class HomeView(
+    ctx: Context,
+    private val onClean: () -> Unit,
+    private val onReport: () -> Unit
+) : View(ctx) {
 
     private val bmp: Bitmap? = try {
         val id = ctx.resources.getIdentifier("game_home", "drawable", ctx.packageName)
@@ -39,23 +44,27 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
     private val bh = bmp?.height?.toFloat() ?: 1672f
     private val m = Matrix()
     private val inv = Matrix()
-    private val btn = RectF(bw * 0.117f, bh * 0.718f, bw * 0.882f, bh * 0.822f)
+    private val btns = arrayOf(
+        RectF(bw * 0.115f, bh * 0.607f, bw * 0.887f, bh * 0.712f),
+        RectF(bw * 0.115f, bh * 0.740f, bw * 0.884f, bh * 0.841f)
+    )
+    private val labels = arrayOf("Tozalash", "Hisobot")
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
-    private var pressed = false
-    private var btnScale = 1f
-    private var anim: ValueAnimator? = null
+    private var pressedIdx = -1
+    private val scales = floatArrayOf(1f, 1f)
+    private val anims = arrayOfNulls<ValueAnimator>(2)
 
-    private fun animateTo(target: Float, ms: Long) {
-        anim?.cancel()
-        val a = ValueAnimator.ofFloat(btnScale, target)
+    private fun animateTo(i: Int, target: Float, ms: Long) {
+        anims[i]?.cancel()
+        val a = ValueAnimator.ofFloat(scales[i], target)
         a.duration = ms
         a.addUpdateListener {
-            btnScale = it.animatedValue as Float
+            scales[i] = it.animatedValue as Float
             invalidate()
         }
         a.start()
-        anim = a
+        anims[i] = a
     }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
@@ -73,14 +82,16 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
             c.drawBitmap(b, 0f, 0f, paint)
         } else {
             c.drawColor(Color.BLACK)
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 4f
-            paint.color = Color.rgb(0, 255, 80)
-            c.drawRoundRect(btn, 60f, 60f, paint)
-            paint.style = Paint.Style.FILL
-            paint.textSize = 80f
-            paint.textAlign = Paint.Align.CENTER
-            c.drawText("Tozalash", btn.centerX(), btn.centerY() + 28f, paint)
+            for (i in 0 until 2) {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 4f
+                paint.color = Color.rgb(0, 255, 80)
+                c.drawRoundRect(btns[i], 80f, 80f, paint)
+                paint.style = Paint.Style.FILL
+                paint.textSize = 70f
+                paint.textAlign = Paint.Align.CENTER
+                c.drawText(labels[i], btns[i].centerX(), btns[i].centerY() + 24f, paint)
+            }
         }
     }
 
@@ -92,54 +103,71 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
         drawContent(c)
         c.restore()
 
-        if (btnScale < 0.999f) {
-            val mg = bw * 0.06f
-            val area = RectF(btn.left - mg, btn.top - mg, btn.right + mg, btn.bottom + mg)
-            c.save()
-            c.concat(m)
-            c.scale(btnScale, btnScale, btn.centerX(), btn.centerY())
-            c.clipRect(area)
-            drawContent(c)
-            c.restore()
+        val mx = bw * 0.06f
+        val my = bh * 0.012f
+        for (i in 0 until 2) {
+            if (scales[i] < 0.999f) {
+                val r = btns[i]
+                val area = RectF(r.left - mx, r.top - my, r.right + mx, r.bottom + my)
+                c.save()
+                c.concat(m)
+                c.scale(scales[i], scales[i], r.centerX(), r.centerY())
+                c.clipRect(area)
+                drawContent(c)
+                c.restore()
+            }
         }
     }
 
-    private fun inside(x: Float, y: Float): Boolean {
+    private fun inside(i: Int, x: Float, y: Float): Boolean {
         val pts = floatArrayOf(x, y)
         inv.mapPoints(pts)
-        return btn.contains(pts[0], pts[1])
+        return btns[i].contains(pts[0], pts[1])
+    }
+
+    private fun findButton(x: Float, y: Float): Int {
+        for (i in 0 until 2) {
+            if (inside(i, x, y)) return i
+        }
+        return -1
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (inside(e.x, e.y)) {
-                    pressed = true
-                    animateTo(0.92f, 90L)
+                val i = findButton(e.x, e.y)
+                if (i >= 0) {
+                    pressedIdx = i
+                    animateTo(i, 0.92f, 90L)
                     return true
                 }
                 return false
             }
             MotionEvent.ACTION_MOVE -> {
-                if (pressed && !inside(e.x, e.y)) {
-                    pressed = false
-                    animateTo(1f, 140L)
+                val i = pressedIdx
+                if (i >= 0 && !inside(i, e.x, e.y)) {
+                    pressedIdx = -1
+                    animateTo(i, 1f, 140L)
                 }
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                val hit = pressed && inside(e.x, e.y)
-                pressed = false
-                animateTo(1f, 140L)
-                if (hit) {
-                    performClick()
-                    onStart()
+                val i = pressedIdx
+                pressedIdx = -1
+                if (i >= 0) {
+                    val hit = inside(i, e.x, e.y)
+                    animateTo(i, 1f, 140L)
+                    if (hit) {
+                        performClick()
+                        if (i == 0) onClean() else onReport()
+                    }
                 }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                pressed = false
-                animateTo(1f, 140L)
+                val i = pressedIdx
+                pressedIdx = -1
+                if (i >= 0) animateTo(i, 1f, 140L)
                 return true
             }
         }
@@ -151,7 +179,7 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
     }
 
     override fun onDetachedFromWindow() {
-        anim?.cancel()
+        for (a in anims) a?.cancel()
         super.onDetachedFromWindow()
     }
 }
@@ -159,6 +187,14 @@ class HomeView(ctx: Context, private val onStart: () -> Unit) : View(ctx) {
 class MainActivity : AppCompatActivity() {
 
     private var waiting = false
+    private lateinit var root: FrameLayout
+    private var report: ReportView? = null
+
+    private val backCb = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            hideReport()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -166,13 +202,14 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = Color.BLACK
         window.navigationBarColor = Color.BLACK
 
-        val root = FrameLayout(this)
+        root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
         root.addView(
-            HomeView(this) { startCleaning() },
+            HomeView(this, { startCleaning() }, { showReport() }),
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         setContentView(root)
+        onBackPressedDispatcher.addCallback(this, backCb)
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -184,12 +221,32 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        report?.refresh()
         if (waiting) {
             waiting = false
             if (CacheAccessibilityService.running()) {
                 Toast.makeText(this, "Ruxsat berildi. Tozalash ni bosing", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    private fun showReport() {
+        if (report != null) return
+        val r = ReportView(this) { hideReport() }
+        root.addView(
+            r,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        report = r
+        backCb.isEnabled = true
+        r.refresh()
+    }
+
+    private fun hideReport() {
+        val r = report ?: return
+        root.removeView(r)
+        report = null
+        backCb.isEnabled = false
     }
 
     private fun startMonitor() {
