@@ -10,7 +10,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import android.text.TextUtils
@@ -59,26 +58,95 @@ object UsageReport {
         return cal.timeInMillis
     }
 
-    private fun screenFromEvents(usm: UsageStatsManager, start: Long, end: Long): Long {
-        if (Build.VERSION.SDK_INT < 28) return 0L
-        val ev = usm.queryEvents(start, end)
+    private class EventData(val apps: HashMap<String, Long>, val screen: Long, val firstTs: Long)
+
+    // Voqealar (ochilish/yopilish) asosida aniq hisoblash, [start, end] oralig'iga kesiladi
+    private fun fromEvents(usm: UsageStatsManager, start: Long, end: Long): EventData {
+        val lookStart = start - 12L * 3600000L
+        val ev = usm.queryEvents(lookStart, end)
         val e = UsageEvents.Event()
-        var on = -1L
-        var total = 0L
+
+        val sums = HashMap<String, Long>()
+        val resumed = HashMap<String, HashSet<String>>()
+        val sessionStart = HashMap<String, Long>()
+        var firstTs = Long.MAX_VALUE
+        var screenTotal = 0L
+        var screenOn = -1L
+        var firstScreenSeen = false
+
+        fun clipLen(s: Long, t: Long): Long {
+            val a = if (s > start) s else start
+            val b = if (t < end) t else end
+            return if (b > a) b - a else 0L
+        }
+
+        fun addClipped(pkg: String, s: Long, t: Long) {
+            val len = clipLen(s, t)
+            if (len > 0L) sums[pkg] = (sums[pkg] ?: 0L) + len
+        }
+
+        fun closeAll(ts: Long) {
+            for (p in ArrayList(sessionStart.keys)) {
+                val s = sessionStart.remove(p)
+                if (s != null) addClipped(p, s, ts)
+            }
+            for (set in resumed.values) set.clear()
+        }
+
         while (ev.hasNextEvent()) {
             ev.getNextEvent(e)
+            val ts = e.timeStamp
+            if (ts < firstTs) firstTs = ts
             val type = e.eventType
-            if (type == 15) {
-                if (on < 0L) on = e.timeStamp
-            } else if (type == 16) {
-                if (on >= 0L) {
-                    total += e.timeStamp - on
-                    on = -1L
+            val pkg = e.packageName ?: ""
+            val cls = e.className ?: ""
+            when (type) {
+                1 -> {
+                    val set = resumed.getOrPut(pkg) { HashSet() }
+                    if (set.isEmpty()) sessionStart[pkg] = ts
+                    set.add(cls)
                 }
+                2, 23 -> {
+                    val set = resumed[pkg]
+                    if (set != null) {
+                        set.remove(cls)
+                        if (set.isEmpty()) {
+                            val s = sessionStart.remove(pkg)
+                            if (s != null) addClipped(pkg, s, ts)
+                        }
+                    }
+                }
+                15 -> {
+                    if (screenOn < 0L) screenOn = ts
+                    firstScreenSeen = true
+                }
+                16 -> {
+                    if (screenOn >= 0L) {
+                        screenTotal += clipLen(screenOn, ts)
+                        screenOn = -1L
+                    } else if (!firstScreenSeen && firstTs <= start) {
+                        screenTotal += clipLen(lookStart, ts)
+                    }
+                    firstScreenSeen = true
+                    closeAll(ts)
+                }
+                17, 26 -> closeAll(ts)
             }
         }
-        if (on >= 0L) total += end - on
-        return total
+        closeAll(end)
+        if (screenOn >= 0L) screenTotal += clipLen(screenOn, end)
+        return EventData(sums, screenTotal, firstTs)
+    }
+
+    // Voqealar yetmasa, Androidning tayyor kunlik jamlamasi
+    private fun bucketSums(usm: UsageStatsManager, start: Long, end: Long): HashMap<String, Long> {
+        val sums = HashMap<String, Long>()
+        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: emptyList()
+        for (s in stats) {
+            val t = s.totalTimeInForeground
+            if (t > 0L) sums[s.packageName] = (sums[s.packageName] ?: 0L) + t
+        }
+        return sums
     }
 
     fun load(c: Context, days: Int): UsageResult {
@@ -87,12 +155,9 @@ object UsageReport {
         val end = System.currentTimeMillis()
         val start = startOfDay(days - 1)
 
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end) ?: emptyList()
-        val sums = HashMap<String, Long>()
-        for (s in stats) {
-            val t = s.totalTimeInForeground
-            if (t > 0L) sums[s.packageName] = (sums[s.packageName] ?: 0L) + t
-        }
+        val ed = fromEvents(usm, start, end)
+        val covered = ed.firstTs <= start + 12L * 3600000L
+        val sums: HashMap<String, Long> = if (covered) ed.apps else bucketSums(usm, start, end)
 
         val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         val homePkg = pm.resolveActivity(homeIntent, 0)?.activityInfo?.packageName
@@ -117,7 +182,7 @@ object UsageReport {
             list.add(AppUse(pkg, label, ms, icon))
         }
         list.sortByDescending { it.ms }
-        val screen = maxOf(screenFromEvents(usm, start, end), appSum)
+        val screen = maxOf(ed.screen, appSum)
         return UsageResult(screen, list)
     }
 }
@@ -128,7 +193,13 @@ class ReportView(ctx: Context, private val onBack: () -> Unit) : FrameLayout(ctx
     private val neon = Color.rgb(40, 255, 100)
     private var days = 1
 
+    private val months = arrayOf(
+        "yanvar", "fevral", "mart", "aprel", "may", "iyun",
+        "iyul", "avgust", "sentyabr", "oktyabr", "noyabr", "dekabr"
+    )
+
     private val summaryTitle = TextView(ctx)
+    private val summaryDate = TextView(ctx)
     private val summaryTime = TextView(ctx)
     private val summaryAvg = TextView(ctx)
     private val list = LinearLayout(ctx)
@@ -136,6 +207,12 @@ class ReportView(ctx: Context, private val onBack: () -> Unit) : FrameLayout(ctx
     private val periodDays = intArrayOf(1, 7, 30)
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun dateLabel(daysAgo: Int): String {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
+        return cal.get(Calendar.DAY_OF_MONTH).toString() + "-" + months[cal.get(Calendar.MONTH)]
+    }
 
     private fun pill(filled: Boolean): GradientDrawable {
         val g = GradientDrawable()
@@ -203,15 +280,18 @@ class ReportView(ctx: Context, private val onBack: () -> Unit) : FrameLayout(ctx
         }
         col.addView(row)
 
-        summaryTitle.text = "Bugun ekran yoniq vaqti"
+        summaryTitle.text = "Ekran yoniq vaqti"
         summaryTitle.textSize = 14f
         summaryTitle.setTextColor(Color.argb(200, 140, 255, 160))
+        summaryDate.textSize = 13f
+        summaryDate.setTextColor(Color.argb(160, 140, 255, 160))
         summaryTime.textSize = 30f
         summaryTime.typeface = Typeface.DEFAULT_BOLD
         summaryTime.setTextColor(green)
         summaryAvg.textSize = 13f
         summaryAvg.setTextColor(Color.argb(200, 140, 255, 160))
         col.addView(summaryTitle)
+        col.addView(summaryDate)
         col.addView(summaryTime)
         col.addView(summaryAvg)
 
@@ -224,11 +304,17 @@ class ReportView(ctx: Context, private val onBack: () -> Unit) : FrameLayout(ctx
 
         addView(col, FrameLayout.LayoutParams(mp, mp))
         updatePeriodButtons()
+        updateDateText()
+    }
+
+    private fun updateDateText() {
+        summaryDate.text = dateLabel(days - 1) + " 00:00 dan hozirgacha"
     }
 
     private fun setPeriod(d: Int) {
         days = d
         updatePeriodButtons()
+        updateDateText()
         refresh()
     }
 
@@ -242,6 +328,7 @@ class ReportView(ctx: Context, private val onBack: () -> Unit) : FrameLayout(ctx
 
     fun refresh() {
         list.removeAllViews()
+        updateDateText()
         if (!UsageReport.hasAccess(context)) {
             summaryTime.text = "—"
             summaryAvg.text = ""
@@ -295,11 +382,6 @@ class ReportView(ctx: Context, private val onBack: () -> Unit) : FrameLayout(ctx
         if (res == null) {
             summaryTime.text = "Xatolik"
             return
-        }
-        summaryTitle.text = when (d) {
-            1 -> "Bugun ekran yoniq vaqti"
-            7 -> "Oxirgi 7 kun ekran yoniq vaqti"
-            else -> "Oxirgi 30 kun ekran yoniq vaqti"
         }
         summaryTime.text = fmt(res.screenMs)
         summaryAvg.text = if (d > 1) "Kuniga o'rtacha: " + fmt(res.screenMs / d) else ""
